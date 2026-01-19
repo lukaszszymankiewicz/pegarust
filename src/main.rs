@@ -1,8 +1,9 @@
 // TODO: better flag operations
-
-#![allow(non_snake_case)]
-#![allow(dead_code)]
-#![allow(non_camel_case_types)]
+use std::time::{Instant, Duration};
+use std::thread::sleep;
+#[allow(non_snake_case)]
+#[allow(dead_code)]
+#[allow(non_camel_case_types)]
 // use raylib::prelude::*;
 use std::io::Read;
 
@@ -21,7 +22,11 @@ const IDF: usize = 2;
 const DF: usize = 3;
 const OF: usize = 6;
 const NF: usize = 7;
+const FPS: usize = 60;
 const CLOCK_CYCLES: usize = 1_789_773;
+const CYCLES_PER_FRAME: usize = CLOCK_CYCLES / FPS;
+const CYCLE_NS: u64 = (1_000_000_000 / CLOCK_CYCLES) as u64;
+const CYCLE_NS_DURATION: Duration = std::time::Duration::from_nanos(CYCLE_NS);
 
 #[derive(Copy, Clone)]
 enum AddressType {
@@ -59,8 +64,6 @@ impl Address {
             AddressingMode::relative => Address{val:_hb, mode:AddressType::literal},
             AddressingMode::implied => Address{val:0, mode:AddressType::literal},
         };
-
-        println!("seettging val = {:#x}", (_lb << 8) + _hb);
 
         return add;
     }
@@ -125,7 +128,8 @@ struct CPU {
     reg_n : u8,
     reg_sp: u8,
     reg_pc: u16,
-
+    
+    clock: usize,
 }
 
 // bit operations
@@ -175,6 +179,7 @@ impl CPU {
             reg_n  : 0 ,
             reg_sp : 0xff ,
             reg_pc : 0x8000,
+            clock  : 0,
         }
     }
 
@@ -727,18 +732,47 @@ impl CPU {
     }
 
     fn run_program(&mut self) {
+        let mut clock: usize = 0;
+        let mut subclock: usize = 0;
+        let mut start = Instant::now();
+        let mut ticks = 0;
+
         loop {
-            println!("PC: {:#x}", self.reg_pc);
-            let idx: usize = self.pop_pc() as usize;
-            let ins = &INSTRUCTION_SET[idx];
-            println!("Instruction op: {:#x} -> {} ", idx, ins.mnemonic);
-            let add: Address = self.get_address(ins.mode);
-            println!("Address used: val={:#x} add=({:#x}) ", self.memory[add.val as usize], add.val);
-            (ins.fun)(self, add);
-            println!("A: {}, X: {}, Y: {}", self.reg_a, self.reg_x, self.reg_y);
-            println!("P: {:08b} ", self.reg_p);
-            println!("Continue...");
-            let _ = std::io::stdin().read(&mut [0u8]).unwrap();
+
+            let mut cycle_start = Instant::now();
+
+            if subclock == 0 {
+                // println!("PC: {:#x}", self.reg_pc);
+                let idx: usize = self.pop_pc() as usize;
+                let ins = &INSTRUCTION_SET[idx];
+                subclock = ins.cycles;
+                // println!("Instruction op: {:#x} -> {} ", idx, ins.mnemonic);
+                let add: Address = self.get_address(ins.mode);
+                // println!("Address used: val={:#x} add=({:#x}) ", self.memory[add.val as usize], add.val);
+                (ins.fun)(self, add);
+                clock += ins.cycles;
+            } else {
+                subclock -= 1;
+            }
+            // println!("A: {}, X: {}, Y: {}", self.reg_a, self.reg_x, self.reg_y);
+            // println!("P: {:08b} ", self.reg_p);
+            let now = cycle_start.elapsed();
+
+            if CYCLE_NS_DURATION.as_nanos() - 200 >= now.as_nanos() {
+                std::thread::sleep(std::time::Duration::from_nanos(CYCLE_NS - 50) - now);
+                ticks += CYCLE_NS as u128 - 200 as u128 - now.as_nanos();
+            } else {
+                println!("whoops.. it took: {}", now.as_nanos());
+            }
+
+            if clock >= CYCLES_PER_FRAME  {
+                println!("dur: {}, requ=16_666_666 ", ticks);
+                println!("Continue...");
+                let _ = std::io::stdin().read(&mut [0u8]).unwrap();
+                clock = 0;
+                ticks = 0;
+                start = Instant::now();
+            }
         }
     }
 }
